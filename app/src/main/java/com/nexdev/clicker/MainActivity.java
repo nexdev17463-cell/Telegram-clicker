@@ -5,13 +5,14 @@ import android.os.Bundle;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.widget.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    EditText message, delayInput;
-    TextView preview;
-    Button start, stop;
-    volatile boolean running = false;
-    Thread typingThread;
+    EditText channelInput;
+    TextView result;
+    Button fetchButton;
+    ExecutorService executor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onCreate(Bundle state) {
@@ -23,83 +24,82 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(18, 22, 35));
 
         TextView title = new TextView(this);
-        title.setText("Telegram Typing Helper");
+        title.setText("Telegram Channel Reader");
         title.setTextSize(24);
         title.setTextColor(Color.WHITE);
         root.addView(title);
 
-        message = new EditText(this);
-        message.setHint("Apna message likho");
-        message.setTextColor(Color.WHITE);
-        message.setHintTextColor(Color.LTGRAY);
-        root.addView(message);
+        channelInput = new EditText(this);
+        channelInput.setHint("@channelusername");
+        channelInput.setSingleLine(true);
+        channelInput.setTextColor(Color.WHITE);
+        channelInput.setHintTextColor(Color.LTGRAY);
+        root.addView(channelInput);
 
-        delayInput = new EditText(this);
-        delayInput.setHint("Delay milliseconds (e.g. 100)");
-        delayInput.setInputType(2);
-        delayInput.setText("100");
-        delayInput.setTextColor(Color.WHITE);
-        root.addView(delayInput);
+        fetchButton = new Button(this);
+        fetchButton.setText("FETCH PUBLIC CHANNEL");
+        root.addView(fetchButton);
 
-        start = new Button(this);
-        start.setText("START PREVIEW");
-        root.addView(start);
-
-        stop = new Button(this);
-        stop.setText("STOP");
-        root.addView(stop);
-
-        preview = new TextView(this);
-        preview.setTextColor(Color.GREEN);
-        preview.setTextSize(18);
-        root.addView(preview);
+        ScrollView scroll = new ScrollView(this);
+        result = new TextView(this);
+        result.setTextColor(Color.WHITE);
+        result.setTextSize(15);
+        result.setText("Channel username daal kar Fetch dabao.");
+        scroll.addView(result);
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                -1, 0, 1));
 
         setContentView(root);
 
-        start.setOnClickListener(v -> beginPreview());
-        stop.setOnClickListener(v -> {
-            running = false;
-            preview.setText(preview.getText() + "\nStopped");
-        });
+        fetchButton.setOnClickListener(v -> fetchChannel());
     }
 
-    void beginPreview() {
-        running = false;
+    void fetchChannel() {
+        String username = channelInput.getText().toString().trim();
 
-        String text = message.getText().toString();
-        long delay;
-
-        try {
-            delay = Long.parseLong(delayInput.getText().toString());
-            if (delay < 0 || delay > 5000) throw new NumberFormatException();
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "Delay 0–5000 ms rakho", Toast.LENGTH_SHORT).show();
+        if (username.isEmpty()) {
+            Toast.makeText(this, "Username daalo",
+                    Toast.LENGTH_SHORT).show();
             return;
         }
 
-        running = true;
-        preview.setText("");
-        final long wait = delay;
+        fetchButton.setEnabled(false);
+        result.setText("Channel load ho raha hai...");
 
-        typingThread = new Thread(() -> {
-            for (int i = 0; i < text.length() && running; i++) {
-                final String current = text.substring(0, i + 1);
-                runOnUiThread(() -> preview.setText(current));
+        executor.execute(() -> {
+            try {
+                String html = ChannelReader.fetchPublicPreview(username);
+                String text = html
+                        .replaceAll("(?is)<script[^>]*>.*?</script>", " ")
+                        .replaceAll("(?is)<style[^>]*>.*?</style>", " ")
+                        .replaceAll("(?s)<[^>]+>", " ")
+                        .replace("&amp;", "&")
+                        .replace("&quot;", "\"")
+                        .replace("&#39;", "'")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replaceAll("\\s+", " ")
+                        .trim();
 
-                try {
-                    Thread.sleep(wait);
-                } catch (InterruptedException e) {
-                    break;
-                }
+                final String display = text.isEmpty()
+                        ? "Preview mila, lekin text extract nahi hua."
+                        : text.substring(0, Math.min(text.length(), 12000));
+
+                runOnUiThread(() -> result.setText(display));
+            } catch (Exception e) {
+                runOnUiThread(() -> result.setText(
+                        "Channel load nahi hua.\n" +
+                        "Username ya internet check karo.\n\n" +
+                        "Error: " + e.getMessage()));
+            } finally {
+                runOnUiThread(() -> fetchButton.setEnabled(true));
             }
-            running = false;
         });
-        typingThread.start();
     }
 
     @Override
     protected void onDestroy() {
-        running = false;
+        executor.shutdownNow();
         super.onDestroy();
     }
 }
